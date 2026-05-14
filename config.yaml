@@ -1,0 +1,18 @@
+scan_root: ..
+target_files:
+  - .flake8
+  - LOCAL_AI_RUNTIME_SETUP.md
+  - COMMON_PROJECT_SKILLS.md
+  - GitHub.md
+exclude_dirs:
+  - .git
+  - .venv
+  - venv
+  - env
+  - node_modules
+  - __pycache__
+  - .pytest_cache
+  - .mypy_cache
+  - .ruff_cache
+  - dist
+  - build
