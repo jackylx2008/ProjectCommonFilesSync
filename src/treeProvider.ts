@@ -4,7 +4,7 @@ import { loadConfig } from './config';
 import { scanProjects } from './scanner';
 import { FileVersion, ProjectFileState, projectLabel, ScanResult, VersionGroup } from './types';
 
-export type TreeNode = FileNode | GroupNode | MissingNode | ProjectNode;
+export type TreeNode = FileNode | GroupNode | ProjectNode;
 
 export class CommonFilesTreeProvider implements vscode.TreeDataProvider<TreeNode> {
   private readonly changeEmitter = new vscode.EventEmitter<TreeNode | undefined | null | void>();
@@ -50,12 +50,7 @@ export class CommonFilesTreeProvider implements vscode.TreeDataProvider<TreeNode
     }
     if (element instanceof FileNode) {
       const groups = this.result.groupsByFile.get(element.fileName) ?? [];
-      const missingCount = this.missingStates(element.fileName).length;
-      const nodes: TreeNode[] = groups.map((group, index) => new GroupNode(this.result!, group, index));
-      if (missingCount > 0) {
-        nodes.push(new MissingNode(this.result, element.fileName, missingCount));
-      }
-      return nodes;
+      return groups.map((group, index) => new GroupNode(this.result!, group, index));
     }
     if (element instanceof GroupNode) {
       return element.group.versions.map((version) => (
@@ -66,14 +61,7 @@ export class CommonFilesTreeProvider implements vscode.TreeDataProvider<TreeNode
         })
       ));
     }
-    if (element instanceof MissingNode) {
-      return this.missingStates(element.fileName).map((state) => new ProjectNode(this.result!, state));
-    }
     return [];
-  }
-
-  private missingStates(fileName: string): ProjectFileState[] {
-    return this.result?.statesByFile.get(fileName)?.filter((state) => !state.version) ?? [];
   }
 }
 
@@ -103,26 +91,15 @@ export class GroupNode extends vscode.TreeItem {
   constructor(readonly result: ScanResult, readonly group: VersionGroup, index: number) {
     const rep = group.versions[0];
     super(`Version ${index + 1}`, vscode.TreeItemCollapsibleState.Collapsed);
-    this.description = `${group.versions.length} projects, ${rep.size} bytes, ${rep.lineCount} lines`;
+    this.description = `${group.versions.length} projects, ${rep.size} bytes, ${rep.lineCount} lines, ${formatModified(rep.modifiedMs)}`;
     this.tooltip = [
-      `SHA256: ${group.digest}`,
       `Representative: ${rep.filePath}`,
       `Projects: ${group.versions.length}`,
       `Size: ${rep.size}`,
-      `Lines: ${rep.lineCount}`
+      `Lines: ${rep.lineCount}`,
+      `Modified: ${formatModified(rep.modifiedMs)}`
     ].join('\n');
     this.iconPath = new vscode.ThemeIcon('versions');
-  }
-}
-
-export class MissingNode extends vscode.TreeItem {
-  readonly contextValue = 'missingGroup';
-
-  constructor(readonly result: ScanResult, readonly fileName: string, missingCount: number) {
-    super('Missing', vscode.TreeItemCollapsibleState.Collapsed);
-    this.description = `${missingCount} projects`;
-    this.tooltip = `${missingCount} projects do not have ${fileName}.`;
-    this.iconPath = new vscode.ThemeIcon('warning');
   }
 }
 
@@ -131,7 +108,9 @@ export class ProjectNode extends vscode.TreeItem {
 
   constructor(readonly result: ScanResult, readonly state: ProjectFileState) {
     super(projectLabel(state.projectDir, result.scanRoot), vscode.TreeItemCollapsibleState.None);
-    this.description = state.version ? `${state.version.digest.slice(0, 12)} ${state.version.size} bytes` : 'missing';
+    this.description = state.version
+      ? `${state.version.digest.slice(0, 12)} ${state.version.size} bytes ${state.version.lineCount} lines ${formatModified(state.version.modifiedMs)}`
+      : 'missing';
     this.tooltip = buildProjectTooltip(result, state);
     this.iconPath = new vscode.ThemeIcon(state.version ? 'file' : 'circle-slash');
     if (state.version) {
@@ -159,15 +138,33 @@ function buildProjectTooltip(result: ScanResult, state: ProjectFileState): strin
     `SHA256: ${state.version.digest}`,
     `Size: ${state.version.size}`,
     `Lines: ${state.version.lineCount}`,
-    `Modified: ${new Date(state.version.modifiedMs).toLocaleString()}`
+    `Modified: ${formatModified(state.version.modifiedMs)}`
   ].join('\n');
 }
 
 export function versionQuickPickItem(version: FileVersion, scanRoot: string): vscode.QuickPickItem & { version: FileVersion } {
   return {
     label: projectLabel(version.projectDir, scanRoot),
-    description: version.digest.slice(0, 12),
+    description: `${version.size} bytes, ${version.lineCount} lines, ${formatModified(version.modifiedMs)}`,
     detail: path.relative(scanRoot, version.filePath),
     version
   };
+}
+
+export function formatModified(modifiedMs: number): string {
+  const date = new Date(modifiedMs);
+  const pad = (value: number) => value.toString().padStart(2, '0');
+  return [
+    date.getFullYear(),
+    '-',
+    pad(date.getMonth() + 1),
+    '-',
+    pad(date.getDate()),
+    ' ',
+    pad(date.getHours()),
+    ':',
+    pad(date.getMinutes()),
+    ':',
+    pad(date.getSeconds())
+  ].join('');
 }

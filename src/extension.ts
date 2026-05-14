@@ -27,8 +27,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('projectCommonFilesSync.compareProject', async (node?: ProjectNode) => {
       await compareProject(provider, node);
     }),
+    vscode.commands.registerCommand('projectCommonFilesSync.compareGroup', async (node?: GroupNode) => {
+      await compareGroup(provider, node);
+    }),
     vscode.commands.registerCommand('projectCommonFilesSync.copyGroupToSelected', async (node?: GroupNode) => {
       await copyGroupToSelected(provider, node);
+    }),
+    vscode.commands.registerCommand('projectCommonFilesSync.copyGroupToOtherVersions', async (node?: GroupNode) => {
+      await copyGroupToOtherVersions(provider, node);
     }),
     vscode.commands.registerCommand('projectCommonFilesSync.copyGroupToMissing', async (node?: GroupNode) => {
       await copyGroup(provider, node, 'missing');
@@ -80,6 +86,36 @@ async function compareProject(provider: CommonFilesTreeProvider, node?: ProjectN
   await openDiff(node.state.version, picked.state.version);
 }
 
+async function compareGroup(provider: CommonFilesTreeProvider, node?: GroupNode): Promise<void> {
+  const result = provider.getResult();
+  if (!result || !node) {
+    vscode.window.showInformationMessage('Select a version group first.');
+    return;
+  }
+
+  const left = node.group.versions[0];
+  const candidates = (result.groupsByFile.get(node.group.fileName) ?? [])
+    .filter((group) => group.digest !== node.group.digest)
+    .map((group) => group.versions[0]);
+  if (candidates.length === 0) {
+    vscode.window.showInformationMessage(`No other versions found for ${node.group.fileName}.`);
+    return;
+  }
+
+  const picked = await vscode.window.showQuickPick(
+    candidates.map((version) => versionQuickPickItem(version, result.scanRoot)),
+    {
+      title: `Compare ${node.group.fileName} version groups`,
+      placeHolder: 'Choose another version group representative'
+    }
+  );
+  if (!picked?.version) {
+    return;
+  }
+
+  await openDiff(left, picked.version);
+}
+
 async function openDiff(left: FileVersion, right: FileVersion): Promise<void> {
   if (left.digest === right.digest) {
     vscode.window.showInformationMessage(`Content is identical. SHA256: ${left.digest}`);
@@ -126,6 +162,32 @@ async function copyGroupToSelected(provider: CommonFilesTreeProvider, node: Grou
 
   const targets = picked.map((item) => item.state);
   await confirmAndCopy(provider, node.group, source, targets, 'selected');
+}
+
+async function copyGroupToOtherVersions(provider: CommonFilesTreeProvider, node: GroupNode | undefined): Promise<void> {
+  const result = provider.getResult();
+  if (!result || !node) {
+    vscode.window.showInformationMessage('Select a version group first.');
+    return;
+  }
+
+  const source = await chooseSourceVersion(node.group, result.scanRoot);
+  if (!source) {
+    return;
+  }
+
+  const targets = (result.statesByFile.get(node.group.fileName) ?? [])
+    .filter((state) => (
+      Boolean(state.version)
+      && state.projectDir !== source.projectDir
+      && state.version!.digest !== source.digest
+    ));
+  if (targets.length === 0) {
+    vscode.window.showInformationMessage(`No other versions need ${node.group.fileName}.`);
+    return;
+  }
+
+  await confirmAndCopy(provider, node.group, source, targets, 'other version');
 }
 
 async function copyGroup(provider: CommonFilesTreeProvider, node: GroupNode | undefined, mode: 'missing' | 'different'): Promise<void> {
@@ -180,10 +242,10 @@ function shouldCopyToState(state: ProjectFileState, source: FileVersion, mode: '
   if (state.projectDir === source.projectDir) {
     return false;
   }
-  if (!state.version) {
-    return true;
+  if (mode === 'missing') {
+    return !state.version;
   }
-  return mode === 'different' && state.version.digest !== source.digest;
+  return Boolean(state.version && state.version.digest !== source.digest);
 }
 
 async function chooseSourceVersion(group: VersionGroup, scanRoot: string): Promise<FileVersion | undefined> {

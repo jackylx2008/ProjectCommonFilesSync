@@ -14,7 +14,9 @@
     "onView:projectCommonFilesSync.files",
     "onCommand:projectCommonFilesSync.refresh",
     "onCommand:projectCommonFilesSync.compareProject",
+    "onCommand:projectCommonFilesSync.compareGroup",
     "onCommand:projectCommonFilesSync.copyGroupToSelected",
+    "onCommand:projectCommonFilesSync.copyGroupToOtherVersions",
     "onCommand:projectCommonFilesSync.copyGroupToMissing",
     "onCommand:projectCommonFilesSync.copyGroupToDifferent",
     "onCommand:projectCommonFilesSync.openFile"
@@ -48,8 +50,16 @@
         "title": "Compare With..."
       },
       {
+        "command": "projectCommonFilesSync.compareGroup",
+        "title": "Compare Version With..."
+      },
+      {
         "command": "projectCommonFilesSync.copyGroupToSelected",
         "title": "Copy This Version To Selected Projects"
+      },
+      {
+        "command": "projectCommonFilesSync.copyGroupToOtherVersions",
+        "title": "Copy This Version To Other Versions"
       },
       {
         "command": "projectCommonFilesSync.copyGroupToMissing",
@@ -84,9 +94,19 @@
           "group": "inline"
         },
         {
+          "command": "projectCommonFilesSync.compareGroup",
+          "when": "view == projectCommonFilesSync.files && viewItem == versionGroup",
+          "group": "inline"
+        },
+        {
           "command": "projectCommonFilesSync.copyGroupToSelected",
           "when": "view == projectCommonFilesSync.files && viewItem == versionGroup",
           "group": "inline"
+        },
+        {
+          "command": "projectCommonFilesSync.copyGroupToOtherVersions",
+          "when": "view == projectCommonFilesSync.files && viewItem == versionGroup",
+          "group": "copy"
         },
         {
           "command": "projectCommonFilesSync.copyGroupToMissing",

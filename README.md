@@ -76,11 +76,14 @@ npm run compile
 
 - 点击 `Common Files` 视图标题栏刷新按钮重新扫描。
 - 展开目标文件查看内容相同的版本组。
-- 展开版本组查看使用该版本的项目。
+- 展开版本组查看使用该版本的项目；项目状态只列出已找到对应文件的项目。
+- 版本组说明显示项目数、大小、行数和修改时间，不在列表中显示 hash。
 - 在项目节点右键选择 `Compare With...`，使用 VS Code 原生 diff 对比另一个项目的同名文件。
+- 在版本组节点右键选择 `Compare Version With...`，可直接选择另一个版本组代表文件进行 diff。
 - 如果两个文件 SHA256 一致，插件会提示内容一致，不打开 diff。
 - 在版本组节点右键选择 `Copy This Version To Selected Projects`，可选择目标项目覆盖。
-- 在版本组节点右键选择 `Copy This Version To Missing Projects` 或 `Copy This Version To Different Projects`，可批量覆盖缺失或内容不同的项目。
+- 在版本组节点右键选择 `Copy This Version To Other Versions`，可按 Python 桌面版语义覆盖所有已存在但内容不同的项目。
+- 在版本组节点右键选择 `Copy This Version To Missing Projects` 或 `Copy This Version To Different Projects`，可分别覆盖缺失项目或内容不同的项目。
 
 ## 常用命令
 
