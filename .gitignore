@@ -230,3 +230,8 @@ logs/
 
 # Debug scripts
 debug_*.py
+
+# Node / VS Code extension
+node_modules/
+.vscode-test/
+out/

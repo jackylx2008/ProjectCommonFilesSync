@@ -1,0 +1,118 @@
+{
+  "name": "project-common-files-sync",
+  "displayName": "Project Common Files Sync",
+  "description": "Scan sibling projects, group common file versions, compare with VS Code diff, and copy selected versions.",
+  "version": "0.1.0",
+  "publisher": "jackylx2008",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:projectCommonFilesSync.files",
+    "onCommand:projectCommonFilesSync.refresh",
+    "onCommand:projectCommonFilesSync.compareProject",
+    "onCommand:projectCommonFilesSync.copyGroupToSelected",
+    "onCommand:projectCommonFilesSync.copyGroupToMissing",
+    "onCommand:projectCommonFilesSync.copyGroupToDifferent",
+    "onCommand:projectCommonFilesSync.openFile"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "projectCommonFilesSync",
+          "title": "Common Files",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "projectCommonFilesSync": [
+        {
+          "id": "projectCommonFilesSync.files",
+          "name": "Project Common Files"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "projectCommonFilesSync.refresh",
+        "title": "Refresh"
+      },
+      {
+        "command": "projectCommonFilesSync.compareProject",
+        "title": "Compare With..."
+      },
+      {
+        "command": "projectCommonFilesSync.copyGroupToSelected",
+        "title": "Copy This Version To Selected Projects"
+      },
+      {
+        "command": "projectCommonFilesSync.copyGroupToMissing",
+        "title": "Copy This Version To Missing Projects"
+      },
+      {
+        "command": "projectCommonFilesSync.copyGroupToDifferent",
+        "title": "Copy This Version To Different Projects"
+      },
+      {
+        "command": "projectCommonFilesSync.openFile",
+        "title": "Open File"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "projectCommonFilesSync.refresh",
+          "when": "view == projectCommonFilesSync.files",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "projectCommonFilesSync.compareProject",
+          "when": "view == projectCommonFilesSync.files && viewItem == projectState",
+          "group": "inline"
+        },
+        {
+          "command": "projectCommonFilesSync.openFile",
+          "when": "view == projectCommonFilesSync.files && viewItem == projectState",
+          "group": "inline"
+        },
+        {
+          "command": "projectCommonFilesSync.copyGroupToSelected",
+          "when": "view == projectCommonFilesSync.files && viewItem == versionGroup",
+          "group": "inline"
+        },
+        {
+          "command": "projectCommonFilesSync.copyGroupToMissing",
+          "when": "view == projectCommonFilesSync.files && viewItem == versionGroup",
+          "group": "copy"
+        },
+        {
+          "command": "projectCommonFilesSync.copyGroupToDifferent",
+          "when": "view == projectCommonFilesSync.files && viewItem == versionGroup",
+          "group": "copy"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.14.10",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.5.4"
+  }
+}

@@ -1,0 +1,10 @@
+__pycache__/**
+common_sync/__pycache__/**
+node_modules/**
+src/**
+*.py
+requirements.txt
+tsconfig.json
+package-lock.json
+.git/**
+.gitignore
