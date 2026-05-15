@@ -42,7 +42,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from common_sync.config import load_config
+from logging_config import get_logger, setup_logger
+from common_sync.config import AppConfig, load_config
 from common_sync.scanner import (
     FileVersion,
     ProjectFileState,
@@ -56,15 +57,16 @@ from common_sync.scanner import (
 
 CONFIG_PATH = Path(__file__).with_name("config.yaml")
 CURRENT_PROJECT_DIR = Path(__file__).parent.resolve()
+logger = get_logger(__name__)
 
 
 class MainWindow(QMainWindow):
-    def __init__(self) -> None:
+    def __init__(self, initial_config: AppConfig | None = None) -> None:
         super().__init__()
         self.setWindowTitle("Project Common Files Sync")
         self.resize(1500, 900)
 
-        self.config = load_config(CONFIG_PATH)
+        self.config = initial_config or load_config(CONFIG_PATH)
         self.result: ScanResult | None = None
         self.current_file_name: str | None = None
         self.selected_group: VersionGroup | None = None
@@ -95,7 +97,7 @@ class MainWindow(QMainWindow):
         self.status_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         refresh_button = QPushButton("重新扫描")
-        refresh_button.clicked.connect(self.refresh)
+        refresh_button.clicked.connect(lambda: self.refresh(reason="manual"))
         copy_button = QPushButton("用选中版本覆盖勾选项目")
         copy_button.clicked.connect(self.copy_selected_version)
         copy_group_button = QPushButton("覆盖其他版本")
@@ -168,13 +170,15 @@ class MainWindow(QMainWindow):
         self.group_table.itemSelectionChanged.connect(self._on_group_selected)
         self.project_table.itemSelectionChanged.connect(self._on_project_selection_changed)
 
-        self.refresh()
+        self.refresh(reason="startup")
 
-    def refresh(self) -> None:
+    def refresh(self, reason: str = "manual") -> None:
         try:
+            logger.info("Refresh started: reason=%s config=%s", reason, CONFIG_PATH)
             self.config = load_config(CONFIG_PATH)
             self.result = scan_projects(self.config, CURRENT_PROJECT_DIR)
         except Exception as exc:
+            logger.exception("Refresh failed: reason=%s", reason)
             QMessageBox.critical(self, "扫描失败", str(exc))
             return
 
@@ -189,6 +193,12 @@ class MainWindow(QMainWindow):
         self._fill_file_table()
         self.status_label.setText(
             f"已扫描 {len(self.result.project_dirs)} 个项目，目标文件 {len(self.result.target_files)} 个。"
+        )
+        logger.info(
+            "Refresh finished: reason=%s projects=%d target_files=%d",
+            reason,
+            len(self.result.project_dirs),
+            len(self.result.target_files),
         )
 
     def copy_selected_version(self) -> None:
@@ -207,17 +217,22 @@ class MainWindow(QMainWindow):
             f"{source.path}\n\n此操作会直接写入目标文件。"
         )
         if QMessageBox.question(self, "确认覆盖", message) != QMessageBox.Yes:
+            logger.info("Copy selected version canceled by user: source=%s targets=%d", source.path, len(targets))
             return
 
         try:
+            logger.info("Copying selected version: source=%s targets=%d", source.path, len(targets))
             copied = copy_version_to_projects(source, targets)
         except Exception as exc:
+            logger.exception("Copy selected version failed: source=%s targets=%d", source.path, len(targets))
             QMessageBox.critical(self, "覆盖失败", str(exc))
             return
 
+        logger.info("Copy selected version completed: copied=%d", len(copied))
         QMessageBox.information(self, "覆盖完成", f"已写入 {len(copied)} 个文件。")
         file_name = self.current_file_name
-        self.refresh()
+        logger.info("Refreshing after file modification: operation=copy_selected_version copied=%d", len(copied))
+        self.refresh(reason="after_copy_selected_version")
         if file_name:
             self._select_file_name(file_name)
 
@@ -253,17 +268,34 @@ class MainWindow(QMainWindow):
             "此操作会直接写入目标文件。"
         )
         if QMessageBox.question(self, "确认覆盖其他版本", message) != QMessageBox.Yes:
+            logger.info(
+                "Copy group to other versions canceled by user: source=%s targets=%d",
+                source.path,
+                len(target_projects),
+            )
             return
 
         try:
+            logger.info(
+                "Copying group to other versions: source=%s targets=%d",
+                source.path,
+                len(target_projects),
+            )
             copied = copy_version_to_projects(source, target_projects)
         except Exception as exc:
+            logger.exception(
+                "Copy group to other versions failed: source=%s targets=%d",
+                source.path,
+                len(target_projects),
+            )
             QMessageBox.critical(self, "覆盖失败", str(exc))
             return
 
         file_name = self.current_file_name
+        logger.info("Copy group to other versions completed: copied=%d", len(copied))
         QMessageBox.information(self, "覆盖完成", f"已写入 {len(copied)} 个文件。")
-        self.refresh()
+        logger.info("Refreshing after file modification: operation=copy_group_to_other_versions copied=%d", len(copied))
+        self.refresh(reason="after_copy_group_to_other_versions")
         if file_name:
             self._select_file_name(file_name)
 
@@ -436,17 +468,22 @@ class MainWindow(QMainWindow):
             "此操作会直接写入目标文件。"
         )
         if QMessageBox.question(self, "确认覆盖", message) != QMessageBox.Yes:
+            logger.info("Copy current diff canceled by user: source=%s target=%s", source.path, target_path)
             return
 
         try:
+            logger.info("Copying current diff: source=%s target_project=%s", source.path, target_state.project_dir)
             copied = copy_version_to_projects(source, [target_state.project_dir])
         except Exception as exc:
+            logger.exception("Copy current diff failed: source=%s target=%s", source.path, target_path)
             QMessageBox.critical(self, "覆盖失败", str(exc))
             return
 
         file_name = self.current_file_name
+        logger.info("Copy current diff completed: copied=%d", len(copied))
         QMessageBox.information(self, "覆盖完成", f"已写入 {len(copied)} 个文件。")
-        self.refresh()
+        logger.info("Refreshing after file modification: operation=copy_current_diff copied=%d", len(copied))
+        self.refresh(reason="after_copy_current_diff")
         if file_name:
             self._select_file_name(file_name)
 
@@ -696,10 +733,15 @@ def _relative_or_absolute(path: Path, base: Path) -> str:
 
 
 def main() -> int:
+    startup_config = load_config(CONFIG_PATH)
+    setup_logger(log_level=startup_config.log_level)
+    logger.info("Starting Project Common Files Sync desktop app")
     app = QApplication(sys.argv)
-    window = MainWindow()
+    window = MainWindow(startup_config)
     window.show()
-    return app.exec()
+    exit_code = app.exec()
+    logger.info("Project Common Files Sync desktop app exited: code=%s", exit_code)
+    return exit_code
 
 
 if __name__ == "__main__":

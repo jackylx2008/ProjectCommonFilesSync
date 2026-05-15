@@ -1,9 +1,11 @@
-scan_root: ..
+scan_root: "${CLOUDSTATION_ROOT}/Python/Project"
+log_level: INFO
 target_files:
   - .flake8
   - LOCAL_AI_RUNTIME_SETUP.md
   - COMMON_PROJECT_SKILLS.md
   - GitHub.md
+  - logging_config.py
 exclude_dirs:
   - .git
   - .venv

@@ -19,7 +19,8 @@ python main.py
 编辑仓库根目录下的 `config.yaml`：
 
 ```yaml
-scan_root: ..
+scan_root: "${CLOUDSTATION_ROOT}/Python/Project"
+log_level: INFO
 target_files:
   - .flake8
   - LOCAL_AI_RUNTIME_SETUP.md
@@ -41,8 +42,24 @@ exclude_dirs:
 字段说明：
 
 - `scan_root`：要扫描的根目录，通常是当前项目的上一级目录。
+- `scan_root` 支持 `${CLOUDSTATION_ROOT}`，运行时会解析为当前平台的 CloudStation 根目录。
+- `log_level`：桌面版日志级别，例如 `DEBUG`、`INFO`、`WARNING`。
 - `target_files`：要同步和对比的公共文件名。
 - `exclude_dirs`：递归扫描时跳过的目录名。
+
+桌面版启动后会在仓库根目录的 `log/` 下写入按入口脚本命名的滚动日志文件，例如 `log/main.log`；单文件上限 10 MB，保留 5 份备份。
+
+## CloudStation 本地配置
+
+仓库只保留 `common.env.example`。本机运行时可复制为 `common.env` 并按平台填写 CloudStation 根目录：
+
+```dotenv
+CLOUDSTATION_ROOT_WINDOWS=C:\path\to\CloudStation
+CLOUDSTATION_ROOT_MACOS=~/CloudStation
+CLOUDSTATION_ROOT_LINUX=~/CloudStation
+```
+
+如果同时设置了 `CLOUDSTATION_ROOT`，它会优先于平台变量。未设置环境变量时，程序会尝试从当前项目路径中名为 `CloudStation` 的上级目录推断根目录。
 
 ## 桌面版功能
 

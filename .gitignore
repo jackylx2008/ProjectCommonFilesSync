@@ -228,6 +228,10 @@ __marimo__/
 log/
 logs/
 
+# Local project skills and environment
+COMMON_PROJECT_SKILLS.md
+common.env
+
 # Debug scripts
 debug_*.py
 
