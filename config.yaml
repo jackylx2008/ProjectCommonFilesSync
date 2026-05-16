@@ -6,6 +6,10 @@ target_files:
   - COMMON_PROJECT_SKILLS.md
   - GitHub.md
   - logging_config.py
+  - cublas64_12.dll
+  - cublasLt64_12.dll
+  - cudart64_12.dll
+
 exclude_dirs:
   - .git
   - .venv

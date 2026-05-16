@@ -4,23 +4,14 @@
   "description": "Scan sibling projects, group common file versions, compare with VS Code diff, and copy selected versions.",
   "version": "0.1.0",
   "publisher": "jackylx2008",
+  "icon": "resources/icon.svg",
   "engines": {
     "vscode": "^1.90.0"
   },
   "categories": [
     "Other"
   ],
-  "activationEvents": [
-    "onView:projectCommonFilesSync.files",
-    "onCommand:projectCommonFilesSync.refresh",
-    "onCommand:projectCommonFilesSync.compareProject",
-    "onCommand:projectCommonFilesSync.compareGroup",
-    "onCommand:projectCommonFilesSync.copyGroupToSelected",
-    "onCommand:projectCommonFilesSync.copyGroupToOtherVersions",
-    "onCommand:projectCommonFilesSync.copyGroupToMissing",
-    "onCommand:projectCommonFilesSync.copyGroupToDifferent",
-    "onCommand:projectCommonFilesSync.openFile"
-  ],
+  "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
     "viewsContainers": {

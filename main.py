@@ -6,6 +6,8 @@ import site
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Any
+
 
 def _prepare_pyside6_dll_path() -> None:
     candidates = [Path(path) / "PySide6" for path in site.getsitepackages()]
@@ -54,7 +56,6 @@ from common_sync.scanner import (
     scan_projects,
 )
 
-
 CONFIG_PATH = Path(__file__).with_name("config.yaml")
 CURRENT_PROJECT_DIR = Path(__file__).parent.resolve()
 logger = get_logger(__name__)
@@ -75,10 +76,16 @@ class MainWindow(QMainWindow):
         self._syncing_diff_scroll = False
 
         self.file_table = self._make_table(["文件名", "项目数", "版本组", "缺失"])
-        self.group_table = self._make_table(["版本", "项目数", "大小", "行数", "修改时间", "代表项目"])
-        self.group_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.project_table = self._make_table(["覆盖", "项目", "状态", "版本", "大小", "行数", "修改时间"])
-        self.project_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.group_table = self._make_table(
+            ["版本", "项目数", "大小", "行数", "修改时间", "代表项目"]
+        )
+        self.group_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.project_table = self._make_table(
+            ["覆盖", "项目", "状态", "版本", "大小", "行数", "修改时间"]
+        )
+        self.project_table.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
         self.project_table.itemChanged.connect(self._on_project_item_changed)
 
         self.left_diff = self._make_text_view()
@@ -94,7 +101,9 @@ class MainWindow(QMainWindow):
         self.copy_left_to_right_button.clicked.connect(self.copy_left_diff_to_right)
         self._set_diff_copy_buttons_enabled(False)
         self.status_label = QLabel()
-        self.status_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.status_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
 
         refresh_button = QPushButton("重新扫描")
         refresh_button.clicked.connect(lambda: self.refresh(reason="manual"))
@@ -129,7 +138,7 @@ class MainWindow(QMainWindow):
         right_panel.addLayout(project_header)
         right_panel.addWidget(self.project_table)
 
-        diff_splitter = QSplitter(Qt.Horizontal)
+        diff_splitter = QSplitter(Qt.Orientation.Horizontal)
         left_diff_panel = self._make_diff_panel(self.left_diff, self.left_diff_info)
         right_diff_panel = self._make_diff_panel(self.right_diff, self.right_diff_info)
         diff_splitter.addWidget(left_diff_panel)
@@ -148,7 +157,7 @@ class MainWindow(QMainWindow):
         right_panel.addWidget(QLabel("左右并排差异"))
         right_panel.addWidget(diff_splitter)
 
-        content_splitter = QSplitter(Qt.Horizontal)
+        content_splitter = QSplitter(Qt.Orientation.Horizontal)
         left_widget = QWidget()
         left_widget.setLayout(left_panel)
         right_widget = QWidget()
@@ -168,7 +177,9 @@ class MainWindow(QMainWindow):
 
         self.file_table.itemSelectionChanged.connect(self._on_file_selected)
         self.group_table.itemSelectionChanged.connect(self._on_group_selected)
-        self.project_table.itemSelectionChanged.connect(self._on_project_selection_changed)
+        self.project_table.itemSelectionChanged.connect(
+            self._on_project_selection_changed
+        )
 
         self.refresh(reason="startup")
 
@@ -203,35 +214,57 @@ class MainWindow(QMainWindow):
 
     def copy_selected_version(self) -> None:
         if not self.result or not self.selected_group:
-            QMessageBox.information(self, "未选择版本", "请先在版本组列表中选择一个源版本。")
+            QMessageBox.information(
+                self, "未选择版本", "请先在版本组列表中选择一个源版本。"
+            )
             return
         source = self.selected_group.representative
         targets = self._checked_projects()
         targets = [path for path in targets if path != source.project_dir]
         if not targets:
-            QMessageBox.information(self, "未选择目标", "请勾选至少一个不同于源项目的目标项目。")
+            QMessageBox.information(
+                self, "未选择目标", "请勾选至少一个不同于源项目的目标项目。"
+            )
             return
 
         message = (
             f"将使用以下源文件覆盖 {len(targets)} 个项目中的 {source.file_name}：\n\n"
             f"{source.path}\n\n此操作会直接写入目标文件。"
         )
-        if QMessageBox.question(self, "确认覆盖", message) != QMessageBox.Yes:
-            logger.info("Copy selected version canceled by user: source=%s targets=%d", source.path, len(targets))
+        if (
+            QMessageBox.question(self, "确认覆盖", message)
+            != QMessageBox.StandardButton.Yes
+        ):
+            logger.info(
+                "Copy selected version canceled by user: source=%s targets=%d",
+                source.path,
+                len(targets),
+            )
             return
 
         try:
-            logger.info("Copying selected version: source=%s targets=%d", source.path, len(targets))
+            logger.info(
+                "Copying selected version: source=%s targets=%d",
+                source.path,
+                len(targets),
+            )
             copied = copy_version_to_projects(source, targets)
         except Exception as exc:
-            logger.exception("Copy selected version failed: source=%s targets=%d", source.path, len(targets))
+            logger.exception(
+                "Copy selected version failed: source=%s targets=%d",
+                source.path,
+                len(targets),
+            )
             QMessageBox.critical(self, "覆盖失败", str(exc))
             return
 
         logger.info("Copy selected version completed: copied=%d", len(copied))
         QMessageBox.information(self, "覆盖完成", f"已写入 {len(copied)} 个文件。")
         file_name = self.current_file_name
-        logger.info("Refreshing after file modification: operation=copy_selected_version copied=%d", len(copied))
+        logger.info(
+            "Refreshing after file modification: operation=copy_selected_version copied=%d",
+            len(copied),
+        )
         self.refresh(reason="after_copy_selected_version")
         if file_name:
             self._select_file_name(file_name)
@@ -244,7 +277,9 @@ class MainWindow(QMainWindow):
         groups = self._selected_groups()
         source_group = groups[0] if groups else self.selected_group
         if not source_group:
-            QMessageBox.information(self, "未选择版本", "请先在版本组列表中选择一个源版本。")
+            QMessageBox.information(
+                self, "未选择版本", "请先在版本组列表中选择一个源版本。"
+            )
             return
 
         source = source_group.representative
@@ -254,20 +289,31 @@ class MainWindow(QMainWindow):
             if group.digest != source_group.digest
             for version in group.versions
         ]
-        target_projects = [version.project_dir for version in target_versions if version.project_dir != source.project_dir]
+        target_projects = [
+            version.project_dir
+            for version in target_versions
+            if version.project_dir != source.project_dir
+        ]
         if not target_projects:
             QMessageBox.information(self, "无需覆盖", "没有其它版本需要覆盖。")
             return
 
         preview = "\n".join(f"- {path}" for path in target_projects[:8])
-        extra = f"\n- ... 以及另外 {len(target_projects) - 8} 个项目" if len(target_projects) > 8 else ""
+        extra = (
+            f"\n- ... 以及另外 {len(target_projects) - 8} 个项目"
+            if len(target_projects) > 8
+            else ""
+        )
         message = (
             f"将使用以下源文件覆盖其它 {len(target_projects)} 个版本项目中的 {source.file_name}：\n\n"
             f"源文件：{source.path}\n\n"
             f"目标项目：\n{preview}{extra}\n\n"
             "此操作会直接写入目标文件。"
         )
-        if QMessageBox.question(self, "确认覆盖其他版本", message) != QMessageBox.Yes:
+        if (
+            QMessageBox.question(self, "确认覆盖其他版本", message)
+            != QMessageBox.StandardButton.Yes
+        ):
             logger.info(
                 "Copy group to other versions canceled by user: source=%s targets=%d",
                 source.path,
@@ -294,7 +340,10 @@ class MainWindow(QMainWindow):
         file_name = self.current_file_name
         logger.info("Copy group to other versions completed: copied=%d", len(copied))
         QMessageBox.information(self, "覆盖完成", f"已写入 {len(copied)} 个文件。")
-        logger.info("Refreshing after file modification: operation=copy_group_to_other_versions copied=%d", len(copied))
+        logger.info(
+            "Refreshing after file modification: operation=copy_group_to_other_versions copied=%d",
+            len(copied),
+        )
         self.refresh(reason="after_copy_group_to_other_versions")
         if file_name:
             self._select_file_name(file_name)
@@ -307,10 +356,16 @@ class MainWindow(QMainWindow):
 
         groups = self._selected_groups()
         if len(groups) >= 2:
-            self._show_diff_for_versions(groups[0].representative, groups[1].representative)
+            self._show_diff_for_versions(
+                groups[0].representative, groups[1].representative
+            )
             return
 
-        QMessageBox.information(self, "选择不足", "请在项目状态表中选择两个项目，或在版本组列表中选择两个版本。")
+        QMessageBox.information(
+            self,
+            "选择不足",
+            "请在项目状态表中选择两个项目，或在版本组列表中选择两个版本。",
+        )
 
     def copy_right_diff_to_left(self) -> None:
         self._copy_current_diff("right_to_left")
@@ -350,14 +405,18 @@ class MainWindow(QMainWindow):
 
     def _fill_project_table(self, file_name: str) -> None:
         assert self.result is not None
-        states = tuple(state for state in self.result.states_by_file[file_name] if state.version)
+        states = tuple(
+            state for state in self.result.states_by_file[file_name] if state.version
+        )
         self.project_table.blockSignals(True)
         self.project_table.setRowCount(len(states))
         for row, state in enumerate(states):
             check_item = QTableWidgetItem("")
-            check_item.setFlags(check_item.flags() | Qt.ItemIsUserCheckable)
-            check_item.setCheckState(Qt.Unchecked)
-            check_item.setData(Qt.UserRole, state)
+            check_item.setFlags(
+                check_item.flags() | Qt.ItemFlag.ItemIsUserCheckable
+            )
+            check_item.setCheckState(Qt.CheckState.Unchecked)
+            check_item.setData(Qt.ItemDataRole.UserRole, state)
             self.project_table.setItem(row, 0, check_item)
 
             version = state.version
@@ -367,7 +426,13 @@ class MainWindow(QMainWindow):
             size = str(version.size)
             lines = str(version.line_count)
             modified = _format_time(version.modified_ns)
-            self._set_item(self.project_table, row, 1, _relative_or_absolute(state.project_dir, self.config.scan_root), state)
+            self._set_item(
+                self.project_table,
+                row,
+                1,
+                _relative_or_absolute(state.project_dir, self.config.scan_root),
+                state,
+            )
             self._set_item(self.project_table, row, 2, status)
             self._set_item(self.project_table, row, 3, digest)
             self._set_item(self.project_table, row, 4, size)
@@ -379,7 +444,9 @@ class MainWindow(QMainWindow):
         selected = self.file_table.selectedItems()
         if not selected:
             return
-        file_name = self.file_table.item(selected[0].row(), 0).data(Qt.UserRole)
+        file_name = self.file_table.item(selected[0].row(), 0).data(
+            Qt.ItemDataRole.UserRole
+        )
         self.current_file_name = file_name
         self.selected_group = None
         self.current_diff_left = None
@@ -395,7 +462,9 @@ class MainWindow(QMainWindow):
             return
         self.selected_group = groups[0]
         if len(groups) >= 2:
-            self._show_diff_for_versions(groups[0].representative, groups[1].representative)
+            self._show_diff_for_versions(
+                groups[0].representative, groups[1].representative
+            )
             self.status_label.setText(
                 f"已对比版本组: {groups[0].representative.path} ↔ {groups[1].representative.path}"
             )
@@ -413,7 +482,9 @@ class MainWindow(QMainWindow):
         if item.column() == 0:
             self.project_table.selectRow(item.row())
 
-    def _show_diff_for_states(self, left: ProjectFileState, right: ProjectFileState) -> None:
+    def _show_diff_for_states(
+        self, left: ProjectFileState, right: ProjectFileState
+    ) -> None:
         self.current_diff_left = left
         self.current_diff_right = right
         self._set_diff_copy_buttons_enabled(bool(left.version and right.version))
@@ -431,16 +502,28 @@ class MainWindow(QMainWindow):
             )
             return
         left_text = read_text_for_display(left.version.path if left.version else None)
-        right_text = read_text_for_display(right.version.path if right.version else None)
-        left_title = str(left.version.path if left.version else left.project_dir / left.file_name)
-        right_title = str(right.version.path if right.version else right.project_dir / right.file_name)
-        left_view, right_view, left_tags, right_tags = _side_by_side_diff(left_text, right_text, left_title, right_title)
+        right_text = read_text_for_display(
+            right.version.path if right.version else None
+        )
+        left_title = str(
+            left.version.path if left.version else left.project_dir / left.file_name
+        )
+        right_title = str(
+            right.version.path if right.version else right.project_dir / right.file_name
+        )
+        left_view, right_view, left_tags, right_tags = _side_by_side_diff(
+            left_text, right_text, left_title, right_title
+        )
         self._set_diff(left_view, right_view, left_tags, right_tags)
 
     def _show_diff_for_versions(self, left: FileVersion, right: FileVersion) -> None:
         self._show_diff_for_states(
-            ProjectFileState(project_dir=left.project_dir, file_name=left.file_name, version=left),
-            ProjectFileState(project_dir=right.project_dir, file_name=right.file_name, version=right),
+            ProjectFileState(
+                project_dir=left.project_dir, file_name=left.file_name, version=left
+            ),
+            ProjectFileState(
+                project_dir=right.project_dir, file_name=right.file_name, version=right
+            ),
         )
 
     def _copy_current_diff(self, direction: str) -> None:
@@ -467,22 +550,40 @@ class MainWindow(QMainWindow):
             f"目标文件：{target_path}\n\n"
             "此操作会直接写入目标文件。"
         )
-        if QMessageBox.question(self, "确认覆盖", message) != QMessageBox.Yes:
-            logger.info("Copy current diff canceled by user: source=%s target=%s", source.path, target_path)
+        if (
+            QMessageBox.question(self, "确认覆盖", message)
+            != QMessageBox.StandardButton.Yes
+        ):
+            logger.info(
+                "Copy current diff canceled by user: source=%s target=%s",
+                source.path,
+                target_path,
+            )
             return
 
         try:
-            logger.info("Copying current diff: source=%s target_project=%s", source.path, target_state.project_dir)
+            logger.info(
+                "Copying current diff: source=%s target_project=%s",
+                source.path,
+                target_state.project_dir,
+            )
             copied = copy_version_to_projects(source, [target_state.project_dir])
         except Exception as exc:
-            logger.exception("Copy current diff failed: source=%s target=%s", source.path, target_path)
+            logger.exception(
+                "Copy current diff failed: source=%s target=%s",
+                source.path,
+                target_path,
+            )
             QMessageBox.critical(self, "覆盖失败", str(exc))
             return
 
         file_name = self.current_file_name
         logger.info("Copy current diff completed: copied=%d", len(copied))
         QMessageBox.information(self, "覆盖完成", f"已写入 {len(copied)} 个文件。")
-        logger.info("Refreshing after file modification: operation=copy_current_diff copied=%d", len(copied))
+        logger.info(
+            "Refreshing after file modification: operation=copy_current_diff copied=%d",
+            len(copied),
+        )
         self.refresh(reason="after_copy_current_diff")
         if file_name:
             self._select_file_name(file_name)
@@ -491,7 +592,7 @@ class MainWindow(QMainWindow):
         states: list[ProjectFileState] = []
         seen_rows = sorted({item.row() for item in self.project_table.selectedItems()})
         for row in seen_rows:
-            state = self.project_table.item(row, 0).data(Qt.UserRole)
+            state = self.project_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
             if isinstance(state, ProjectFileState):
                 states.append(state)
         return states
@@ -500,8 +601,8 @@ class MainWindow(QMainWindow):
         projects: list[Path] = []
         for row in range(self.project_table.rowCount()):
             item = self.project_table.item(row, 0)
-            if item and item.checkState() == Qt.Checked:
-                state = item.data(Qt.UserRole)
+            if item and item.checkState() == Qt.CheckState.Checked:
+                state = item.data(Qt.ItemDataRole.UserRole)
                 if isinstance(state, ProjectFileState):
                     projects.append(state.project_dir)
         return projects
@@ -510,8 +611,8 @@ class MainWindow(QMainWindow):
         states: list[ProjectFileState] = []
         for row in range(self.project_table.rowCount()):
             item = self.project_table.item(row, 0)
-            if item and item.checkState() == Qt.Checked:
-                state = item.data(Qt.UserRole)
+            if item and item.checkState() == Qt.CheckState.Checked:
+                state = item.data(Qt.ItemDataRole.UserRole)
                 if isinstance(state, ProjectFileState):
                     states.append(state)
         return states
@@ -520,7 +621,7 @@ class MainWindow(QMainWindow):
         groups: list[VersionGroup] = []
         seen_rows = sorted({item.row() for item in self.group_table.selectedItems()})
         for row in seen_rows:
-            group = self.group_table.item(row, 0).data(Qt.UserRole)
+            group = self.group_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
             if isinstance(group, VersionGroup):
                 groups.append(group)
         return groups
@@ -533,11 +634,16 @@ class MainWindow(QMainWindow):
 
     def _select_file_name(self, file_name: str) -> None:
         for row in range(self.file_table.rowCount()):
-            if self.file_table.item(row, 0).data(Qt.UserRole) == file_name:
+            if (
+                self.file_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+                == file_name
+            ):
                 self.file_table.selectRow(row)
                 break
 
-    def _set_diff(self, left: str, right: str, left_tags: list[str], right_tags: list[str]) -> None:
+    def _set_diff(
+        self, left: str, right: str, left_tags: list[str], right_tags: list[str]
+    ) -> None:
         self.left_diff.setPlainText(left)
         self.right_diff.setPlainText(right)
         self._apply_diff_highlights(self.left_diff, left_tags)
@@ -554,7 +660,9 @@ class MainWindow(QMainWindow):
             lambda value: self._sync_diff_scroll(self.right_diff, self.left_diff, value)
         )
 
-    def _sync_diff_scroll(self, source: QPlainTextEdit, target: QPlainTextEdit, value: int) -> None:
+    def _sync_diff_scroll(
+        self, source: QPlainTextEdit, target: QPlainTextEdit, value: int
+    ) -> None:
         if self._syncing_diff_scroll:
             return
         self._syncing_diff_scroll = True
@@ -568,8 +676,12 @@ class MainWindow(QMainWindow):
         self.copy_left_to_right_button.setEnabled(enabled)
 
     def _set_diff_info_labels(self) -> None:
-        self.left_diff_info.setText(_format_state_version_info(self.current_diff_left, self.config.scan_root))
-        self.right_diff_info.setText(_format_state_version_info(self.current_diff_right, self.config.scan_root))
+        self.left_diff_info.setText(
+            _format_state_version_info(self.current_diff_left, self.config.scan_root)
+        )
+        self.right_diff_info.setText(
+            _format_state_version_info(self.current_diff_right, self.config.scan_root)
+        )
 
     @staticmethod
     def _apply_diff_highlights(editor: QPlainTextEdit, tags: list[str]) -> None:
@@ -587,11 +699,11 @@ class MainWindow(QMainWindow):
             block = editor.document().findBlockByLineNumber(line_number)
             if not block.isValid():
                 continue
-            selection = QTextEdit.ExtraSelection()
+            selection: Any = QTextEdit.ExtraSelection()
             selection.cursor = QTextCursor(block)
             selection.format = QTextCharFormat()
             selection.format.setBackground(QColor(color))
-            selection.format.setProperty(QTextFormat.FullWidthSelection, True)
+            selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
             selections.append(selection)
         editor.setExtraSelections(selections)
 
@@ -601,14 +713,17 @@ class MainWindow(QMainWindow):
         table.setColumnCount(len(headers))
         table.setHorizontalHeaderLabels(headers)
         table.verticalHeader().setVisible(False)
-        table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents
+        )
         table.horizontalHeader().setStretchLastSection(True)
         table.setAlternatingRowColors(True)
-        table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        table.setStyleSheet(
-            """
+        table.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        table.setStyleSheet("""
             QTableWidget::item:selected {
                 background-color: #b8d7ff;
                 color: #000000;
@@ -617,15 +732,14 @@ class MainWindow(QMainWindow):
                 background-color: #d3e7ff;
                 color: #000000;
             }
-            """
-        )
+            """)
         return table
 
     @staticmethod
     def _make_text_view() -> QPlainTextEdit:
         text = QPlainTextEdit()
         text.setReadOnly(True)
-        text.setLineWrapMode(QPlainTextEdit.NoWrap)
+        text.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         text.setFont(QFont("Consolas", 10))
         return text
 
@@ -633,18 +747,16 @@ class MainWindow(QMainWindow):
     def _make_diff_info_label() -> QLabel:
         label = QLabel("未选择对比版本")
         label.setWordWrap(True)
-        label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        label.setStyleSheet(
-            """
+        label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        label.setStyleSheet("""
             QLabel {
                 background-color: #f6f8fa;
                 border-top: 1px solid #d8dee4;
                 color: #24292f;
                 padding: 4px 6px;
             }
-            """
-        )
+            """)
         return label
 
     @staticmethod
@@ -659,12 +771,15 @@ class MainWindow(QMainWindow):
         return panel
 
     @staticmethod
-    def _set_item(table: QTableWidget, row: int, col: int, text: str, data=None) -> None:
+    def _set_item(
+        table: QTableWidget, row: int, col: int, text: str, data=None
+    ) -> None:
         item = QTableWidgetItem(text)
-        item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         if data is not None:
-            item.setData(Qt.UserRole, data)
+            item.setData(Qt.ItemDataRole.UserRole, data)
         table.setItem(row, col, item)
+
 
 def _side_by_side_diff(
     left_text: str,
@@ -709,7 +824,9 @@ def _side_by_side_diff(
 
 
 def _format_time(modified_ns: int) -> str:
-    return datetime.fromtimestamp(modified_ns / 1_000_000_000).strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.fromtimestamp(modified_ns / 1_000_000_000).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
 
 
 def _format_state_version_info(state: ProjectFileState | None, scan_root: Path) -> str:
