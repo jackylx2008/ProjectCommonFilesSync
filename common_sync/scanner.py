@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
 from shutil import copy2
 from time import perf_counter
+from typing import Callable
 
 from logging_config import get_logger
 
@@ -13,6 +16,11 @@ from .config import AppConfig
 
 
 logger = get_logger(__name__)
+
+MAX_SCAN_WORKERS = 8
+STREAMING_THRESHOLD = 16 * 1024 * 1024
+READ_CHUNK_SIZE = 4 * 1024 * 1024
+BINARY_SUFFIXES = {".dll"}
 
 
 @dataclass(frozen=True)
@@ -58,7 +66,16 @@ class ScanResult:
     states_by_file: dict[str, tuple[ProjectFileState, ...]]
 
 
-def scan_projects(config: AppConfig, current_project_dir: Path) -> ScanResult:
+class ScanCancelled(Exception):
+    """Raised when a caller requests cancellation of an active scan."""
+
+
+def scan_projects(
+    config: AppConfig,
+    current_project_dir: Path,
+    progress_callback: Callable[[int, int], None] | None = None,
+    cancel_requested: Callable[[], bool] | None = None,
+) -> ScanResult:
     logger.info(
         "Scanning projects: scan_root=%s target_files=%d current_project_dir=%s",
         config.scan_root,
@@ -70,14 +87,42 @@ def scan_projects(config: AppConfig, current_project_dir: Path) -> ScanResult:
     project_dirs: set[Path] = set()
     current_project_dir = current_project_dir.resolve()
 
-    for file_path in _iter_target_files(config.scan_root, target_names, set(config.exclude_dirs)):
-        project_dir = file_path.parent.resolve()
-        if _is_relative_to(project_dir, current_project_dir):
-            logger.debug("Skipping current project file: %s", file_path)
-            continue
-        version = _read_version(file_path)
-        versions_by_file[file_path.name].append(version)
-        project_dirs.add(project_dir)
+    discovered_paths = list(
+        _iter_target_files(
+            config.scan_root,
+            target_names,
+            set(config.exclude_dirs),
+            progress_callback,
+            cancel_requested,
+        )
+    )
+    file_paths = [
+        path
+        for path in discovered_paths
+        if not _is_relative_to(path.parent.resolve(), current_project_dir)
+    ]
+    cpu_based_workers = max(1, (os.cpu_count() or 4) // 4)
+    worker_count = min(MAX_SCAN_WORKERS, cpu_based_workers, max(1, len(file_paths)))
+    logger.info(
+        "Reading matched files: files=%d workers=%d",
+        len(file_paths),
+        worker_count,
+    )
+    with ThreadPoolExecutor(
+        max_workers=worker_count,
+        thread_name_prefix="project-scan",
+    ) as executor:
+        versions = executor.map(
+            lambda path: _read_version(path, cancel_requested),
+            file_paths,
+        )
+        for version in versions:
+            file_path = version.path
+            if cancel_requested and cancel_requested():
+                raise ScanCancelled()
+            project_dir = version.project_dir
+            versions_by_file[file_path.name].append(version)
+            project_dirs.add(project_dir)
 
     sorted_projects = tuple(sorted(project_dirs, key=lambda path: str(path).lower()))
     frozen_versions = {
@@ -137,7 +182,13 @@ def read_text_for_display(path: Path | None) -> str:
     return data.decode("utf-8", errors="replace")
 
 
-def _iter_target_files(scan_root: Path, target_names: set[str], exclude_dirs: set[str]):
+def _iter_target_files(
+    scan_root: Path,
+    target_names: set[str],
+    exclude_dirs: set[str],
+    progress_callback: Callable[[int, int], None] | None = None,
+    cancel_requested: Callable[[], bool] | None = None,
+):
     start_time = datetime.now()
     started_at = perf_counter()
     scanned_dirs = 0
@@ -154,29 +205,41 @@ def _iter_target_files(scan_root: Path, target_names: set[str], exclude_dirs: se
         start_time.isoformat(timespec="seconds"),
     )
     try:
-        stack = [resolved_scan_root]
+        stack = [os.fspath(resolved_scan_root)]
         while stack:
+            if cancel_requested and cancel_requested():
+                raise ScanCancelled()
             directory = stack.pop()
             scanned_dirs += 1
+            if progress_callback and scanned_dirs % 100 == 0:
+                progress_callback(scanned_dirs, matched_files)
             try:
-                entries = list(directory.iterdir())
+                entries = os.scandir(directory)
             except OSError as exc:
                 unreadable_dirs += 1
                 logger.warning("Skipping unreadable directory: %s (%s)", directory, exc)
                 continue
-            scanned_entries += len(entries)
-            for entry in entries:
-                name = entry.name
-                if entry.is_dir():
-                    if name in exclude_dirs:
-                        skipped_dirs += 1
-                        logger.debug("Skipping excluded directory: %s", entry)
-                        continue
-                    stack.append(entry)
-                elif entry.is_file() and name in target_names:
-                    matched_files += 1
-                    yield entry
+            with entries:
+                for entry in entries:
+                    scanned_entries += 1
+                    name = entry.name
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            if name in exclude_dirs:
+                                skipped_dirs += 1
+                                logger.debug("Skipping excluded directory: %s", entry.path)
+                                continue
+                            stack.append(entry.path)
+                        elif name in target_names and entry.is_file(
+                            follow_symlinks=False
+                        ):
+                            matched_files += 1
+                            yield Path(entry.path)
+                    except OSError as exc:
+                        logger.warning("Skipping unreadable entry: %s (%s)", entry.path, exc)
     finally:
+        if progress_callback:
+            progress_callback(scanned_dirs, matched_files)
         end_time = datetime.now()
         logger.info(
             "Directory traversal finished: root=%s start_time=%s end_time=%s duration_seconds=%.3f "
@@ -193,22 +256,70 @@ def _iter_target_files(scan_root: Path, target_names: set[str], exclude_dirs: se
         )
 
 
-def _read_version(path: Path) -> FileVersion:
-    data = path.read_bytes()
-    try:
-        line_count = len(data.decode("utf-8-sig").splitlines())
-    except UnicodeDecodeError:
-        line_count = len(data.splitlines())
+def _read_version(
+    path: Path,
+    cancel_requested: Callable[[], bool] | None = None,
+) -> FileVersion:
     stat = path.stat()
+    is_binary = path.suffix.lower() in BINARY_SUFFIXES
+    if stat.st_size <= STREAMING_THRESHOLD:
+        data = path.read_bytes()
+        digest = sha256(data).hexdigest()
+        if is_binary:
+            line_count = 0
+        else:
+            try:
+                line_count = len(data.decode("utf-8-sig").splitlines())
+            except UnicodeDecodeError:
+                line_count = len(data.splitlines())
+    else:
+        digest, line_count = _stream_digest_and_line_count(
+            path,
+            cancel_requested,
+            count_lines=not is_binary,
+        )
     return FileVersion(
         project_dir=path.parent.resolve(),
         file_name=path.name,
         path=path.resolve(),
-        digest=sha256(data).hexdigest(),
+        digest=digest,
         size=stat.st_size,
         line_count=line_count,
         modified_ns=stat.st_mtime_ns,
     )
+
+
+def _stream_digest_and_line_count(
+    path: Path,
+    cancel_requested: Callable[[], bool] | None,
+    count_lines: bool,
+) -> tuple[str, int]:
+    digest = sha256()
+    line_breaks = 0
+    previous_was_cr = False
+    last_byte = -1
+    with path.open("rb") as stream:
+        while chunk := stream.read(READ_CHUNK_SIZE):
+            if cancel_requested and cancel_requested():
+                raise ScanCancelled()
+            digest.update(chunk)
+            if count_lines:
+                line_breaks += sum(
+                    chunk.count(bytes((separator,)))
+                    for separator in (10, 11, 12, 13, 28, 29, 30, 133)
+                )
+                line_breaks -= chunk.count(b"\r\n")
+                if previous_was_cr and chunk[0] == 10:
+                    line_breaks -= 1
+                previous_was_cr = chunk[-1] == 13
+                last_byte = chunk[-1]
+    if not count_lines:
+        return digest.hexdigest(), 0
+    line_count = line_breaks
+    if last_byte != -1:
+        if last_byte not in (10, 11, 12, 13, 28, 29, 30, 133):
+            line_count += 1
+    return digest.hexdigest(), line_count
 
 
 def _group_versions(file_name: str, versions: tuple[FileVersion, ...]) -> tuple[VersionGroup, ...]:

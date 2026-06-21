@@ -4,6 +4,7 @@ import difflib
 import os
 import site
 import sys
+from threading import Event
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -23,8 +24,15 @@ def _prepare_pyside6_dll_path() -> None:
 
 _prepare_pyside6_dll_path()
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor, QTextFormat
+from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
+from PySide6.QtGui import (
+    QColor,
+    QCloseEvent,
+    QFont,
+    QTextCharFormat,
+    QTextCursor,
+    QTextFormat,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
@@ -49,6 +57,7 @@ from common_sync.config import AppConfig, load_config
 from common_sync.scanner import (
     FileVersion,
     ProjectFileState,
+    ScanCancelled,
     ScanResult,
     VersionGroup,
     copy_version_to_projects,
@@ -59,6 +68,40 @@ from common_sync.scanner import (
 CONFIG_PATH = Path(__file__).with_name("config.yaml")
 CURRENT_PROJECT_DIR = Path(__file__).parent.resolve()
 logger = get_logger(__name__)
+
+
+class ScanWorker(QObject):
+    progress = Signal(int, int)
+    succeeded = Signal(object, object)
+    failed = Signal(str)
+    cancelled = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._cancel_requested = Event()
+
+    def cancel(self) -> None:
+        self._cancel_requested.set()
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            config = load_config(CONFIG_PATH)
+            result = scan_projects(
+                config,
+                CURRENT_PROJECT_DIR,
+                progress_callback=self.progress.emit,
+                cancel_requested=self._cancel_requested.is_set,
+            )
+        except ScanCancelled:
+            logger.info("Background scan cancelled")
+            self.cancelled.emit()
+            return
+        except Exception as exc:
+            logger.exception("Background scan failed")
+            self.failed.emit(str(exc))
+            return
+        self.succeeded.emit(config, result)
 
 
 class MainWindow(QMainWindow):
@@ -74,6 +117,11 @@ class MainWindow(QMainWindow):
         self.current_diff_left: ProjectFileState | None = None
         self.current_diff_right: ProjectFileState | None = None
         self._syncing_diff_scroll = False
+        self._scan_thread: QThread | None = None
+        self._scan_worker: ScanWorker | None = None
+        self._scan_reason = ""
+        self._file_to_select_after_scan: str | None = None
+        self._close_after_scan = False
 
         self.file_table = self._make_table(["文件名", "项目数", "版本组", "缺失"])
         self.group_table = self._make_table(
@@ -105,8 +153,8 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
         )
 
-        refresh_button = QPushButton("重新扫描")
-        refresh_button.clicked.connect(lambda: self.refresh(reason="manual"))
+        self.refresh_button = QPushButton("重新扫描")
+        self.refresh_button.clicked.connect(lambda: self.refresh(reason="manual"))
         copy_button = QPushButton("用选中版本覆盖勾选项目")
         copy_button.clicked.connect(self.copy_selected_version)
         copy_group_button = QPushButton("覆盖其他版本")
@@ -117,7 +165,7 @@ class MainWindow(QMainWindow):
         top_bar = QHBoxLayout()
         top_bar.addWidget(QLabel(f"扫描目录: {self.config.scan_root}"))
         top_bar.addStretch()
-        top_bar.addWidget(refresh_button)
+        top_bar.addWidget(self.refresh_button)
 
         left_panel = QVBoxLayout()
         left_panel.addWidget(QLabel("目标文件"))
@@ -183,16 +231,48 @@ class MainWindow(QMainWindow):
 
         self.refresh(reason="startup")
 
-    def refresh(self, reason: str = "manual") -> None:
-        try:
-            logger.info("Refresh started: reason=%s config=%s", reason, CONFIG_PATH)
-            self.config = load_config(CONFIG_PATH)
-            self.result = scan_projects(self.config, CURRENT_PROJECT_DIR)
-        except Exception as exc:
-            logger.exception("Refresh failed: reason=%s", reason)
-            QMessageBox.critical(self, "扫描失败", str(exc))
+    def refresh(
+        self, reason: str = "manual", select_file_name: str | None = None
+    ) -> None:
+        if self._scan_thread is not None:
+            self.status_label.setText("扫描正在进行，请稍候……")
             return
 
+        logger.info("Refresh started: reason=%s config=%s", reason, CONFIG_PATH)
+        self._scan_reason = reason
+        self._file_to_select_after_scan = select_file_name
+        self.status_label.setText("正在扫描项目目录……")
+        self.refresh_button.setEnabled(False)
+
+        thread = QThread(self)
+        worker = ScanWorker()
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._on_scan_progress)
+        worker.succeeded.connect(self._on_scan_succeeded)
+        worker.failed.connect(self._on_scan_failed)
+        worker.cancelled.connect(thread.quit)
+        worker.succeeded.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        worker.cancelled.connect(worker.deleteLater)
+        worker.succeeded.connect(worker.deleteLater)
+        worker.failed.connect(worker.deleteLater)
+        thread.finished.connect(self._on_scan_thread_finished)
+        thread.finished.connect(thread.deleteLater)
+        self._scan_thread = thread
+        self._scan_worker = worker
+        thread.start()
+
+    @Slot(int, int)
+    def _on_scan_progress(self, scanned_dirs: int, matched_files: int) -> None:
+        self.status_label.setText(
+            f"正在扫描……已检查 {scanned_dirs} 个目录，发现 {matched_files} 个目标文件。"
+        )
+
+    @Slot(object, object)
+    def _on_scan_succeeded(self, config: AppConfig, result: ScanResult) -> None:
+        self.config = config
+        self.result = result
         self.current_file_name = None
         self.selected_group = None
         self.current_diff_left = None
@@ -202,15 +282,44 @@ class MainWindow(QMainWindow):
         self.project_table.setRowCount(0)
         self._set_diff("", "", [], [])
         self._fill_file_table()
+        if self._file_to_select_after_scan:
+            self._select_file_name(self._file_to_select_after_scan)
         self.status_label.setText(
             f"已扫描 {len(self.result.project_dirs)} 个项目，目标文件 {len(self.result.target_files)} 个。"
         )
         logger.info(
             "Refresh finished: reason=%s projects=%d target_files=%d",
-            reason,
+            self._scan_reason,
             len(self.result.project_dirs),
             len(self.result.target_files),
         )
+
+    @Slot(str)
+    def _on_scan_failed(self, message: str) -> None:
+        logger.error("Refresh failed: reason=%s error=%s", self._scan_reason, message)
+        self.status_label.setText(f"扫描失败：{message}")
+        if not self._close_after_scan:
+            QMessageBox.critical(self, "扫描失败", message)
+
+    @Slot()
+    def _on_scan_thread_finished(self) -> None:
+        self._scan_thread = None
+        self._scan_worker = None
+        self._scan_reason = ""
+        self._file_to_select_after_scan = None
+        self.refresh_button.setEnabled(True)
+        if self._close_after_scan:
+            self.close()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if self._scan_thread is not None and self._scan_thread.isRunning():
+            self._close_after_scan = True
+            self.status_label.setText("正在取消扫描并退出……")
+            if self._scan_worker is not None:
+                self._scan_worker.cancel()
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     def copy_selected_version(self) -> None:
         if not self.result or not self.selected_group:
@@ -265,9 +374,9 @@ class MainWindow(QMainWindow):
             "Refreshing after file modification: operation=copy_selected_version copied=%d",
             len(copied),
         )
-        self.refresh(reason="after_copy_selected_version")
-        if file_name:
-            self._select_file_name(file_name)
+        self.refresh(
+            reason="after_copy_selected_version", select_file_name=file_name
+        )
 
     def copy_selected_group_to_other_versions(self) -> None:
         if not self.result or not self.current_file_name:
@@ -344,9 +453,9 @@ class MainWindow(QMainWindow):
             "Refreshing after file modification: operation=copy_group_to_other_versions copied=%d",
             len(copied),
         )
-        self.refresh(reason="after_copy_group_to_other_versions")
-        if file_name:
-            self._select_file_name(file_name)
+        self.refresh(
+            reason="after_copy_group_to_other_versions", select_file_name=file_name
+        )
 
     def show_selected_diff(self) -> None:
         states = self._states_for_compare()
@@ -584,9 +693,7 @@ class MainWindow(QMainWindow):
             "Refreshing after file modification: operation=copy_current_diff copied=%d",
             len(copied),
         )
-        self.refresh(reason="after_copy_current_diff")
-        if file_name:
-            self._select_file_name(file_name)
+        self.refresh(reason="after_copy_current_diff", select_file_name=file_name)
 
     def _selected_project_states(self) -> list[ProjectFileState]:
         states: list[ProjectFileState] = []
